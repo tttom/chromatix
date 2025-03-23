@@ -3,11 +3,9 @@ A module with functions to solve electro-magnetic problems.
 
 See example_solve2d.py for an example.
 """
-import jax
 import jax.numpy as jnp
 import jaxopt
 import jaxopt.linear_solve
-import numpy as np
 import scipy.constants as const
 
 from chromatix.utils import dim, Grid
@@ -63,19 +61,14 @@ def precondition(grid: Grid, k0: float, permittivity, current_density, adjoint: 
     permittivity_bias, scale = get_shift_and_scale(permittivity)
     scale_inv = 1 / (scale * (1 - 2 * adjoint))
 
-    # jax.debug.print('permittivity.shape = {p}', p=permittivity.shape)
+    subscripts = '...ij,...k->...k' if permittivity.shape[-1] == 1 else '...ij,...j->...i'
+    scaled_and_shifted_permittivity_bias = permittivity_bias * scale_inv + 1
     scaled_permittivity = permittivity * scale_inv
     del permittivity
-    # subscripts = '...ij,...->...' if scaled_permittivity.shape[-1] == 1 else '...ij,...j->...i'
-    scaled_and_shifted_permittivity_bias = permittivity_bias * scale_inv + 1
-    if scaled_permittivity.shape[-1] == 1:
-        def shifted_discrepancy(x):
-            """The discrepancy after approximation of the scaled isotropic problem, shifted by -1."""
-            return scaled_permittivity[..., 0] * x
-    else:
-        def shifted_discrepancy(x):
-            """The discrepancy after approximation of the scaled anisotropic problem, shifted by -1."""
-            return jnp.einsum('...ij,...j->...i', scaled_permittivity, x) - scaled_and_shifted_permittivity_bias * x
+
+    def shifted_discrepancy(x):
+        """The discrepancy after approximation of the scaled (an)isotropic problem, shifted by -1."""
+        return jnp.einsum(subscripts, scaled_permittivity, x) - scaled_and_shifted_permittivity_bias * x
 
     def split_trans_long_ft(y_ft):
         """Split a k-space vector field into its transverse and longitudinal components."""
@@ -94,7 +87,7 @@ def precondition(grid: Grid, k0: float, permittivity, current_density, adjoint: 
 
         y_ft = jnp.fft.fftn(y, **ft_kwargs)
         y_trans_ft, y_long_ft = split_trans_long_ft(y_ft)
-        return jnp.fft.ifftn(y_trans_ft / (-k2[..., np.newaxis] / scale + scaled_and_shifted_permittivity_bias) +
+        return jnp.fft.ifftn(y_trans_ft / (-k2[..., jnp.newaxis] / scale + scaled_and_shifted_permittivity_bias) +
                              y_long_ft / scaled_and_shifted_permittivity_bias,
                              **ft_kwargs
                              )

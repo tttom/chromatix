@@ -50,8 +50,8 @@ def define_problem(grid_shape = (256, 256)):
     refractive_index = 1 + (material_refractive_index - 1) * (sum(_ ** 2 for _ in grid) ** 0.5 < object_diameter / 2)
     permittivity = refractive_index ** 2 + bound.electric_susceptibility  # just for clarity, macromax actually does this implicitly
 
-    # identity = jnp.eye(3).reshape(3, 3, *([1] * grid.ndim))  # A simple test of anisotropy
-    # permittivity = identity * permittivity
+    # A simple test for anisotropy
+    # permittivity = permittivity[..., jnp.newaxis, jnp.newaxis] * jnp.eye(3)
 
     target_radius = max(min(grid.extent) / 64, min(grid.step))
     target_area = sum((rng - o) ** 2 for rng, o in zip(grid, (grid.first[0] + bound.thickness[0, 1], grid.first[1] + grid.extent[1] - bound.thickness[1, 1]))) < target_radius ** 2
@@ -99,7 +99,7 @@ def main():
     print('Solving...')
     @jax.jit
     def solve(permittivity, current_density):
-        return electro_solver.solve(grid, k0, permittivity, current_density, maxiter=6)
+        return electro_solver.solve(grid, k0, permittivity, current_density)
     E = solve(permittivity, current_density)
 
     print('Displaying...')
