@@ -56,11 +56,15 @@ def define_problem(grid_shape = (256, 256)):
     target_radius = max(min(grid.extent) / 64, min(grid.step))
     target_area = sum((rng - o) ** 2 for rng, o in zip(grid, (grid.first[0] + bound.thickness[0, 1], grid.first[1] + grid.extent[1] - bound.thickness[1, 1]))) < target_radius ** 2
 
-    return grid, k0, permittivity, current_density, target_area
+    return grid, k0, permittivity, jnp.moveaxis(current_density, 0, -1), target_area
 
 def display(grid, permittivity, current_density, E, labels=None, target_area=0.0):
     """Display the input and output, including absorbing boundaries for clarity."""
-    if E.ndim <= current_density.ndim:
+    permittivity = jnp.moveaxis(permittivity, (-2, -1), (0, 1))
+    current_density = jnp.moveaxis(current_density, -1, 0)
+    E = jnp.moveaxis(E, -1, 0)
+
+    if E.ndim <= current_density.ndim:  # Check if multiple inputs
         E = E[jnp.newaxis]
     labels = ('' for _ in range(len(E))) if labels is None else (_ + ' | ' for _ in labels)
     fig, axs = plt.subplots(1 + E.shape[0], 3, sharex='all', sharey='all')
@@ -95,7 +99,7 @@ def main():
     print('Solving...')
     @jax.jit
     def solve(permittivity, current_density):
-        return electro_solver.solve(grid, k0, permittivity, current_density)
+        return electro_solver.solve(grid, k0, permittivity, current_density, maxiter=6)
     E = solve(permittivity, current_density)
 
     print('Displaying...')

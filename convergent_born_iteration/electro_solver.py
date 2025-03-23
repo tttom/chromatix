@@ -7,6 +7,7 @@ import jax
 import jax.numpy as jnp
 import jaxopt
 import jaxopt.linear_solve
+import numpy as np
 import scipy.constants as const
 
 from chromatix.utils import dim, Grid
@@ -29,7 +30,7 @@ def get_shift_and_scale(permittivity):
     :return: The complex tuple (shift, scale)
     """
     def matrix_norm(_, s: complex):
-        return jnp.linalg.norm(jnp.moveaxis(_, (0, 1), (-2, -1)) - s * jnp.eye(_.shape[0]), axis=(-2, -1))  # This may be faster by using a custom implementation (see macromax)
+        return jnp.linalg.norm(_ - s * jnp.eye(_.shape[-1]), axis=(-2, -1))  # This may be faster by using a custom implementation (see macromax)
 
     shift = 1.3  # This can be chosen more optimally to minimize the below scale factor, and maximize the convergence rate.
     scale = 1.1j * jnp.amax(matrix_norm(permittivity, shift))  # Must be strictly larger than the norm in the polarization dimension
@@ -53,7 +54,7 @@ def precondition(grid: Grid, k0: float, permittivity, current_density, adjoint: 
         2. The preconditioned right hand side.
 
     """
-    grid_shape = current_density.shape[1:]  # FIXME: for some reason we cannot use grid.shape when JIT-ing.
+    grid_shape = current_density.shape[:-1]  # FIXME: for some reason we cannot use grid.shape when JIT-ing.
     grid_k = [dim.to_axis(jnp.fft.ifftshift(jnp.arange(sh) - (sh // 2)) * st * 2 * jnp.pi / k0,
                           axis=-len(grid_shape) + _
                           )
@@ -62,32 +63,38 @@ def precondition(grid: Grid, k0: float, permittivity, current_density, adjoint: 
     permittivity_bias, scale = get_shift_and_scale(permittivity)
     scale_inv = 1 / (scale * (1 - 2 * adjoint))
 
-    subscripts = 'ij...,...->...' if permittivity.shape[0] == 1 else 'ij...,j...->i...'
+    # jax.debug.print('permittivity.shape = {p}', p=permittivity.shape)
     scaled_permittivity = permittivity * scale_inv
     del permittivity
+    # subscripts = '...ij,...->...' if scaled_permittivity.shape[-1] == 1 else '...ij,...j->...i'
     scaled_and_shifted_permittivity_bias = permittivity_bias * scale_inv + 1
-    def shifted_discrepancy(x):
-        """The discrepancy after approximation of the scaled isotropic problem, shifted by -1."""
-        return jnp.einsum(subscripts, scaled_permittivity, x) - scaled_and_shifted_permittivity_bias * x
+    if scaled_permittivity.shape[-1] == 1:
+        def shifted_discrepancy(x):
+            """The discrepancy after approximation of the scaled isotropic problem, shifted by -1."""
+            return scaled_permittivity[..., 0] * x
+    else:
+        def shifted_discrepancy(x):
+            """The discrepancy after approximation of the scaled anisotropic problem, shifted by -1."""
+            return jnp.einsum('...ij,...j->...i', scaled_permittivity, x) - scaled_and_shifted_permittivity_bias * x
 
     def split_trans_long_ft(y_ft):
         """Split a k-space vector field into its transverse and longitudinal components."""
         k2 = sum(_ ** 2 for _ in grid_k)  # This is more memory & computationally efficient when computed on-the-fly every time
         dc = k2 == 0  # just to avoid division by 0
-        projection_coefficient_div_norm_k = sum(k * y_ft_c for k, y_ft_c in zip(grid_k, y_ft)) / (k2 + dc)  # dot-product with over-normalized k-vector
-        grid_k_3d = (*grid_k, *([0] * (y_ft.shape[0] - len(grid_k))))  # 0-pad sequence of vectors
-        y_long_ft = jnp.stack([k * projection_coefficient_div_norm_k for k in grid_k_3d])
+        projection_coefficient_div_norm_k = sum(k * y_ft_c for k, y_ft_c in zip(grid_k, jnp.moveaxis(y_ft, -1, 0))) / (k2 + dc)  # dot-product with over-normalized k-vector
+        grid_k_3d = (*grid_k, *([0] * (y_ft.shape[-1] - len(grid_k))))  # 0-pad sequence of vectors
+        y_long_ft = jnp.stack([k * projection_coefficient_div_norm_k for k in grid_k_3d], axis=-1)
         y_trans_ft = y_ft - y_long_ft
         return y_trans_ft, y_long_ft
 
     def shifted_approx_inv(y):
         """The inverse of the scaled and shifted-by-1 approximation to the scaled forward problem."""
         k2 = sum(_ ** 2 for _ in grid_k)  # This is more memory & computationally efficient when computed on-the-fly every time
-        ft_kwargs = dict(axes=tuple(range(-len(grid_k), 0)))  # use , norm='ortho' to avoid numerical problems with low numerical precision.
+        ft_kwargs = dict(axes=tuple(range(len(grid_k))))  # use , norm='ortho' to avoid numerical problems with low numerical precision.
 
         y_ft = jnp.fft.fftn(y, **ft_kwargs)
         y_trans_ft, y_long_ft = split_trans_long_ft(y_ft)
-        return jnp.fft.ifftn(y_trans_ft / (-k2 / scale + scaled_and_shifted_permittivity_bias) +
+        return jnp.fft.ifftn(y_trans_ft / (-k2[..., np.newaxis] / scale + scaled_and_shifted_permittivity_bias) +
                              y_long_ft / scaled_and_shifted_permittivity_bias,
                              **ft_kwargs
                              )
@@ -126,9 +133,9 @@ def solve(grid: Grid, k0: float, permittivity, current_density, initial_E = None
         axes are spatial dimensions.
     """
     while permittivity.ndim < 2 + len(grid.shape):
-        permittivity = permittivity[jnp.newaxis]  # Add singleton dimensions on the left.
+        permittivity = permittivity[..., jnp.newaxis]  # Add singleton dimensions on the left.
     if adjoint:
-        permittivity = permittivity.transpose(0, 1).conj()
+        permittivity = permittivity.transpose(-2, -1).conj()
     prec_forward, prec_y = precondition(grid, k0, permittivity, current_density, adjoint=adjoint)
     numerical_scale = jnp.amax(jnp.abs(prec_y))  # To avoid overflow or underflow with our machine precision
     prec_y /= numerical_scale
