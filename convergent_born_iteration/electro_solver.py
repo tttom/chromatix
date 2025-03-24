@@ -4,7 +4,6 @@ A module with functions to solve electro-magnetic problems.
 See example_solve2d.py for an example.
 """
 import jax.numpy as jnp
-import jax.scipy.optimize
 import jaxopt
 import jaxopt.linear_solve
 import scipy.constants as const
@@ -32,12 +31,11 @@ def get_shift_and_scale(permittivity):
         """Computes the norm of the shifted (block-)diagonal potential."""
         return jnp.amax(jnp.linalg.norm(_ - s * jnp.eye(_.shape[-1]), axis=(-2, -1)))
 
-    s0 = jnp.array((1.0, 0.1))
-    optim_result = jax.scipy.optimize.minimize(lambda x: shifted_norm(permittivity, x[0] + x[1] * 1j), s0,
-                                               method='BFGS', tol=1e-2, options=dict(maxiter=10),
-                                               )
-    shift = optim_result.x[0] + 1j * optim_result.x[1]
-    scale = 1.1j * optim_result.fun
+    shift, opt_state = jaxopt.LBFGS(
+        lambda x: shifted_norm(permittivity, x),
+        maxiter=5,
+    ).run(jnp.array((1.6 + 0.25j, )))
+    scale = 1.1j * opt_state.value
 
     return shift, scale
 

@@ -5,7 +5,6 @@ A script to measure the solver's time-efficiency using the example found in exam
 import timeit
 
 import jax
-import jax.numpy as jnp
 
 from convergent_born_iteration import electro_solver
 from examples.convergent_born_series_solve2d import define_problem
