@@ -54,6 +54,8 @@ def define_problem(grid_shape = (256, 256)):
     target_radius = max(min(grid.extent) / 64, min(grid.step))
     target_area = sum((rng - o) ** 2 for rng, o in zip(grid, (grid.first[0] + bound.thickness[0, 1], grid.first[1] + grid.extent[1] - bound.thickness[1, 1]))) < target_radius ** 2
 
+    print(f'Defined a problem of shape {grid.shape}.')
+
     return grid, k0, permittivity, jnp.moveaxis(current_density, 0, -1), target_area
 
 def display(grid, permittivity, current_density, E, labels=None, target_area=0.0):
@@ -86,13 +88,7 @@ def display(grid, permittivity, current_density, E, labels=None, target_area=0.0
 
 def main():
     print(f'Starting {__name__} ...')
-
-    print('Defining the problem.')
     grid, k0, permittivity, current_density, _ = define_problem([256, 256 * 4 // 3])
-
-    print(f'Converting problem of shape {grid.shape} to JAX.')
-    permittivity = jnp.array(permittivity)
-    current_density = jnp.array(current_density)
 
     print('Solving...')
     @jax.jit
