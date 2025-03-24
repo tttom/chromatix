@@ -67,8 +67,8 @@ def precondition(grid: Grid, k0: float, permittivity, current_density, adjoint: 
     permittivity_bias, scale = get_shift_and_scale(permittivity)
     scale_inv = 1 / (scale * (1 - 2 * adjoint))
 
-    scaled_and_shifted_permittivity_bias = permittivity_bias * scale_inv + 1
     subscripts = '...ij,...k->...k' if permittivity.shape[-1] == 1 else '...ij,...j->...i'
+    scaled_and_shifted_permittivity_bias = permittivity_bias * scale_inv + 1
     scaled_permittivity = permittivity * scale_inv
     del permittivity
 
